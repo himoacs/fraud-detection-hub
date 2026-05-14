@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-scorer
+  namespace: fraud-detection
+  labels:
+    app: transaction-scorer
+    component: sam-agent
+spec:
+  replicas: 2  # Scale for high throughput
+  selector:
+    matchLabels:
+      app: transaction-scorer
+  template:
+    metadata:
+      labels:
+        app: transaction-scorer
+        component: sam-agent
+    spec:
+      containers:
+        - name: transaction-scorer
+          image: fraud-detection/transaction-scorer:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+            - secretRef:
+                name: fraud-detection-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import sys; sys.exit(0)"
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import sys; sys.exit(0)"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-generator
+  namespace: fraud-detection
+  labels:
+    app: alert-generator
+    component: sam-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alert-generator
+  template:
+    metadata:
+      labels:
+        app: alert-generator
+        component: sam-agent
+    spec:
+      containers:
+        - name: alert-generator
+          image: fraud-detection/alert-generator:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+            - secretRef:
+                name: fraud-detection-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-aggregator
+  namespace: fraud-detection
+  labels:
+    app: metrics-aggregator
+    component: sam-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-aggregator
+  template:
+    metadata:
+      labels:
+        app: metrics-aggregator
+        component: sam-agent
+    spec:
+      containers:
+        - name: metrics-aggregator
+          image: fraud-detection/metrics-aggregator:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+            - secretRef:
+                name: fraud-detection-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

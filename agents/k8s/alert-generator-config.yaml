@@ -1,0 +1,98 @@
+# SAM Agent Configuration for Alert Generator
+# Generates alerts for high-risk transactions detected by the Transaction Scorer
+
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: alert-generator.log
+
+shared_config:
+  - broker_connection: &broker_connection
+      dev_mode: ${SOLACE_DEV_MODE, false}
+      broker_url: ${SOLACE_BROKER_URL, ws://localhost:8008}
+      broker_username: ${SOLACE_BROKER_USERNAME, default}
+      broker_password: ${SOLACE_BROKER_PASSWORD, default}
+      broker_vpn: ${SOLACE_BROKER_VPN, default}      # Use durable queues for message persistence during crashes      temporary_queue: ${USE_TEMPORARY_QUEUES, true}
+
+  - models:
+      general: &general_model
+        model: ${LLM_SERVICE_GENERAL_MODEL_NAME, gpt-4o-mini}
+        api_base: ${LLM_SERVICE_ENDPOINT, https://api.openai.com/v1}
+        api_key: ${LLM_SERVICE_API_KEY}
+
+  - services:
+      session_service: &default_session_service
+        type: "memory"
+        default_behavior: "PERSISTENT"
+      artifact_service: &default_artifact_service
+        type: "memory"
+
+apps:
+  - name: alert-generator-app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "FraudAlertGenerator"
+      display_name: "Fraud Alert Generator"
+      
+      agent_identity:
+        key_persistence: "/tmp/_agent_FraudAlertGenerator.key"
+      
+      model: *general_model
+      model_provider:
+        - "general"
+      
+      instruction: |
+        You are a fraud alert generation agent that creates actionable alerts for high-risk transactions.
+        
+        When given a scored transaction, evaluate if an alert is needed:
+        - Score >= 90: CRITICAL alert - immediate action required
+        - Score >= 80: HIGH alert - urgent review needed
+        - Score >= 70: MEDIUM alert - standard review
+        - Score < 70: No alert needed
+        
+        For each alert, provide:
+        1. A clear headline describing the threat
+        2. The severity level (critical, high, medium)
+        3. Key risk factors and patterns detected
+        4. Recommended actions for fraud analysts
+        
+        Format your response as JSON with:
+        {
+          "needs_alert": true/false,
+          "severity": "critical|high|medium|low",
+          "headline": "<concise threat description>",
+          "patterns": ["<pattern1>", ...],
+          "recommended_actions": ["<action1>", ...],
+          "reasoning": "<explanation>"
+        }
+      
+      session_service: *default_session_service
+      artifact_service: *default_artifact_service
+      
+      agent_card:
+        description: "Generates real-time fraud alerts for high-risk transactions with severity classification and recommended actions"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "evaluate_alert"
+            name: "Evaluate Alert Criteria"
+            description: "Evaluates if a scored transaction requires an alert based on risk score"
+          - id: "generate_alert"
+            name: "Generate Fraud Alert"
+            description: "Creates a detailed fraud alert with severity, headline, and recommended actions"
+      
+      agent_card_publishing:
+        interval_seconds: 10
+      
+      agent_discovery:
+        enabled: true
+      
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 30

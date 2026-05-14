@@ -1,0 +1,54 @@
+# Values file for deploying Fraud Metrics Aggregator to SAM
+
+# Agent identifier (must be unique)
+id: "fraud-metrics-aggregator"
+
+# Image configuration - using locally loaded image
+global:
+  imageRegistry: ""
+  persistence:
+    namespaceId: "solace-agent-mesh"
+
+image:
+  repository: solace-agent-mesh-enterprise
+  tag: "1.211.0"
+  pullPolicy: Never
+
+# Broker configuration
+solaceBroker:
+  url: "ws://host.docker.internal:8008"
+  username: "sam"
+  password: "sam"
+  vpn: "sam"
+  # IMPORTANT: Use durable queues for message persistence
+  useTemporaryQueues: false
+
+# LLM Service configuration
+llmService:
+  generalModelName: "gpt-4o-mini"
+  endpoint: "https://api.openai.com/v1"
+  apiKey: ""
+
+# Reuse persistence secrets from agent-mesh deployment
+persistence:
+  createSecrets: false
+  existingSecrets:
+    database: agent-mesh-postgresql
+    s3: agent-mesh-solace-agent-mesh-storage
+
+# SAM namespace
+environmentVariables:
+  NAMESPACE: "solace-agent-mesh"
+
+# Resource limits
+resources:
+  sam:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+service:
+  type: ClusterIP

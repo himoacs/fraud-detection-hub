@@ -1,0 +1,145 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sam-gateway-019e1cfa-e037-7df0-8f07-6c86e03ba427-sam-agent-conf
+  namespace: default
+data:
+  agent.yaml: |
+    log:
+      stdout_log_level: INFO
+      log_file_level: DEBUG
+      log_file: "019e1cfa_e037_7df0_8f07_6c86e03ba427.log"
+
+    apps:
+      - name: "019e1cfa_e037_7df0_8f07_6c86e03ba427"
+        app_base_path: "."
+        app_module: "sam_event_mesh_gateway.app"
+        broker:
+          dev_mode: ${SOLACE_DEV_MODE, false}
+          broker_url: ${SOLACE_BROKER_URL}
+          broker_username: ${SOLACE_BROKER_USERNAME}
+          broker_password: ${SOLACE_BROKER_PASSWORD}
+          broker_vpn: ${SOLACE_BROKER_VPN}
+          temporary_queue: ${USE_TEMPORARY_QUEUES, false}
+        app_config:
+          namespace: "${NAMESPACE}"
+          gateway_type: "event_mesh"
+          gateway_id: "019e1cfa-e037-7df0-8f07-6c86e03ba427"
+          deployment:
+            id: "019e24a6-6cf4-71b2-ab93-b619841db585"
+          gateway_card_publishing:
+            enabled: true
+            interval_seconds: 30
+          artifact_service:
+            type: ${ARTIFACT_SERVICE_TYPE, s3}
+            bucket_name: ${S3_BUCKET_NAME}
+            endpoint_url: ${S3_ENDPOINT_URL}
+            aws_region: ${AWS_REGION, us-east-1}
+            artifact_scope: namespace
+          enable_embed_resolution: true
+          gateway_artifact_content_limit_bytes: 10000000
+          gateway_recursive_embed_depth: 3
+          authorization_service:
+            type: "none"
+          system_purpose: >
+            The system is an AI-powered fraud detection platform.
+            It analyzes financial transactions in real-time using AI agents.
+            Always provide clear, actionable fraud assessments.
+            Return JSON responses when analyzing transactions.
+
+          event_mesh_broker_config:
+            broker_url: "${SOLACE_BROKER_URL}"
+            broker_vpn: "${SOLACE_BROKER_VPN}"
+            broker_username: "${SOLACE_BROKER_USERNAME}"
+            broker_password: "${SOLACE_BROKER_PASSWORD}"
+            temporary_queue: false  # Use durable queues for guaranteed delivery
+
+          # Gateway-level acknowledgment policy
+          # mode: "on_completion" = messages stay unacked until agent completes
+          acknowledgment_policy:
+            mode: "on_completion"
+            on_failure:
+              action: "nack"
+              nack_outcome: "rejected"
+            timeout_seconds: 120
+
+          event_handlers:
+            # Handler 1: Score incoming transactions
+            # qos: 1 enables guaranteed delivery via internal queue
+            - name: "score_transaction"
+              subscriptions:
+                - topic: "solace/fraud/v1/transactions/inbound/>"
+                  qos: 1
+              target_agent_name: "agent_019e24ab_d43f_7ec1_88a6_415223d84c45"
+              input_expression: |
+                template:Analyze this financial transaction for fraud risk.
+
+                Transaction Data:
+                {{input.payload}}
+
+                Return a JSON object with these exact fields:
+                - transaction_id: string (from input)
+                - risk_score: number 0-100
+                - risk_level: string (low if <50, medium if 50-69, high if 70-89, critical if >=90)
+                - decision: string (approved if <50, review if 50-79, blocked if >=80)
+                - detected_patterns: array of strings
+                - reasoning: string
+              payload_format: "json"
+              default_user_identity: "event-mesh-scorer"
+              on_success: "score_transaction_success"
+              on_error: "score_transaction_error"
+              # Handler-level acknowledgment policy
+              acknowledgment_policy:
+                mode: "on_completion"
+                timeout_seconds: 60
+
+            # Handler 2: Generate alerts for high-risk transactions
+            - name: "generate_alert"
+              subscriptions:
+                - topic: "solace/fraud/v1/transactions/scored"
+                  qos: 1
+              target_agent_name: "agent_019e24ac_a8cd_74b3_b1a2_234bc94ef42a"
+              input_expression: |
+                template:You are a fraud alert evaluator. Analyze the scored transaction and output ONLY a JSON object.
+
+                Scored Transaction:
+                {{input.payload}}
+
+                RULES:
+                1. Extract risk_score and transaction_id from the input
+                2. If risk_score >= 70, create an alert
+                3. Output ONLY valid JSON, no other text
+
+                Required JSON output format:
+                {
+                  "transaction_id": "<from input>",
+                  "risk_score": <number from input>,
+                  "needs_alert": <true if risk_score >= 70, false otherwise>,
+                  "alert_id": "<generate UUID if needs_alert>",
+                  "severity": "<critical if >=90, high if >=80, medium if >=70, low otherwise>",
+                  "headline": "<brief description of alert>"
+                }
+              payload_format: "json"
+              default_user_identity: "event-mesh-alerter"
+              on_success: "generate_alert_success"
+              on_error: "generate_alert_error"
+              acknowledgment_policy:
+                mode: "on_completion"
+                timeout_seconds: 30
+
+          output_handlers:
+            - name: "score_transaction_success"
+              topic_expression: "static:solace/fraud/v1/transactions/scored"
+              payload_expression: "task_response:text"
+
+            - name: "score_transaction_error"
+              topic_expression: "static:solace/fraud/v1/errors/scoring"
+              payload_expression: "task_response:a2a_task_response.error"
+
+            - name: "generate_alert_success"
+              topic_expression: "static:solace/fraud/v1/alerts"
+              payload_expression: "task_response:text"
+
+            - name: "generate_alert_error"
+              topic_expression: "static:solace/fraud/v1/errors/alerting"
+              payload_expression: "task_response:a2a_task_response.error"

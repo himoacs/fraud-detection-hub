@@ -1,0 +1,158 @@
+# Fraud Detection Event Mesh Gateway
+# Based on: https://github.com/SolaceLabs/solace-agent-mesh-core-plugins/tree/main/sam-event-mesh-gateway
+#
+# Deploy with: sam run config.yaml
+#
+# This gateway provides:
+# - At-least-once delivery with deferred acknowledgment (acknowledgment_policy: on_completion)
+# - Automatic retry on failure with configurable DLQ
+# - Chat and transaction processing handlers
+#
+# Prerequisites:
+# - SAM CLI installed (pip install solace-agent-mesh)
+# - sam-event-mesh-gateway plugin: sam plugin add fraud-emg --plugin sam-event-mesh-gateway
+# - Environment variables set (see .env.example)
+
+---
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: fraud-emg-gateway.log
+
+# Shared broker connection config (A2A control plane)
+shared_config:
+  - broker_connection: &broker_connection
+      dev_mode: ${SOLACE_DEV_MODE:-false}
+      broker_url: ${SOLACE_BROKER_URL:-ws://localhost:8008}
+      broker_username: ${SOLACE_BROKER_USERNAME:-default}
+      broker_password: ${SOLACE_BROKER_PASSWORD:-default}
+      broker_vpn: ${SOLACE_BROKER_VPN:-default}
+      temporary_queue: ${USE_TEMPORARY_QUEUES:-false}
+
+  - artifact_service: &default_artifact_service
+      type: "filesystem"
+      base_path: "/tmp/sam_artifacts"
+      artifact_scope: namespace
+
+apps:
+  - name: fraud-event-mesh-gateway-app
+    app_module: sam_event_mesh_gateway.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE:-default}
+      gateway_id: "fraud-emg-gw-01"
+      
+      # Artifact storage
+      artifact_service:
+        <<: *default_artifact_service
+
+      # Authorization (none for dev, "default_rbac" for prod)
+      authorization_service:
+        type: "none"
+
+      # Default user identity for unauthenticated requests
+      default_user_identity: "fraud-detection-user"
+
+      # ============================================================
+      # DATA PLANE CONNECTION (can be same as control plane)
+      # ============================================================
+      event_mesh_broker_config:
+        broker_url: ${DATA_PLANE_BROKER_URL:-${SOLACE_BROKER_URL:-ws://localhost:8008}}
+        broker_vpn: ${DATA_PLANE_BROKER_VPN:-${SOLACE_BROKER_VPN:-default}}
+        broker_username: ${DATA_PLANE_BROKER_USERNAME:-${SOLACE_BROKER_USERNAME:-default}}
+        broker_password: ${DATA_PLANE_BROKER_PASSWORD:-${SOLACE_BROKER_PASSWORD:-default}}
+
+      # ============================================================
+      # ACKNOWLEDGMENT POLICY - CRITICAL FOR MESSAGE PERSISTENCE
+      # ============================================================
+      # mode: "on_completion" = defer ACK until task completes
+      # This provides at-least-once delivery semantics:
+      # - Messages remain in queue while processing
+      # - If gateway crashes, broker redelivers the message
+      # - On success, message is ACKed and removed from queue
+      #
+      # For rate-limiting, configure the Solace broker queue:
+      #   max-delivered-unacked-msgs-per-flow 5  # process 5 at a time
+      #   max-redelivery 3                       # prevent infinite loops
+      # ============================================================
+      acknowledgment_policy:
+        mode: "on_completion"      # "on_receive" (default) | "on_completion"
+        on_failure:
+          action: "nack"           # "nack" (retry) | "ack" (discard)
+          nack_outcome: "rejected" # "rejected" (redeliver) | "failed" (DLQ)
+        timeout_seconds: 300       # 5 minute timeout per task
+
+      # ============================================================
+      # EVENT HANDLERS - Process incoming events
+      # ============================================================
+      event_handlers:
+        # Handler 1: Chat requests - route DIRECTLY to FraudMetricsAggregator
+        # NOTE: We bypass OrchestratorAgent because its persistent sessions cause
+        # response routing issues when multiple gateways target the same orchestrator.
+        # Chat queries are stateless database lookups, so direct routing is correct.
+        - name: "chat_request_handler"
+          subscriptions:
+            - topic: "fraud/chat/request"
+              qos: 1  # At-least-once delivery
+          input_expression: "template:You are a helpful fraud detection assistant. Answer the user's question about fraud transactions, risk scores, alerts, or metrics using your database query tools. Be conversational and helpful. User message: {{json://input.payload}}"
+          payload_format: "json"
+          payload_encoding: "utf-8"
+          default_user_identity: "dashboard-chat-user"
+          target_agent_name: "FraudMetricsAggregator"
+          on_success: "chat_response_handler"
+          on_error: "chat_error_handler"
+          forward_context:
+            correlation_id: "input.user_properties:correlation_id"
+            reply_topic: "input.user_properties:reply_to"
+
+        # Handler 2: Raw transactions - route to OrchestratorAgent for full processing
+        # Orchestrator coordinates: scoring → alert generation → metrics update
+        - name: "transaction_scorer_rule"
+          subscriptions:
+            - topic: "fraud/transactions/raw/>"
+              qos: 1  # At-least-once delivery (required for acknowledgment_policy)
+          input_expression: "template:Process this incoming transaction in sequence:\n\n1. FIRST: Use the \"Analyze Transaction Fraud\" skill from FraudTransactionScorer to calculate a risk score (0-100)\n2. THEN: If risk_score >= 70, use the \"Evaluate Alert Criteria\" and \"Generate Fraud Alert\" skills from FraudAlertGenerator\n3. FINALLY: Use the FraudMetricsAggregator to update metrics\n\nReturn a JSON response with: transaction_id, risk_score, decision, alert (if generated), and metrics_updated flag.\n\nTransaction: {{json://input.payload}}"
+          payload_format: "json"
+          payload_encoding: "utf-8"
+          default_user_identity: "transaction-processor"
+          target_agent_name: "OrchestratorAgent"
+          on_success: "transaction_processed_handler"
+          on_error: "transaction_error_handler"
+          forward_context:
+            transaction_id: "input.payload:transaction_id"
+            original_topic: "input.topic:"
+
+      # ============================================================
+      # OUTPUT HANDLERS - Publish results back to event mesh
+      # ============================================================
+      output_handlers:
+        # Chat response - publish to static topic
+        - name: "chat_response_handler"
+          topic_expression: "static:fraud/chat/response"
+          payload_expression: "task_response:text"
+          payload_encoding: "utf-8"
+          payload_format: "text"
+
+        # Chat error - publish errors for monitoring
+        - name: "chat_error_handler"
+          topic_expression: "static:fraud/chat/error"
+          payload_expression: "task_response:a2a_task_response.error"
+          payload_encoding: "utf-8"
+          payload_format: "json"
+
+        # Processed transaction - publish scored transaction
+        - name: "transaction_processed_handler"
+          max_file_size_for_base64_bytes: 1048576  # 1MB limit for embedded files
+          topic_expression: "static:fraud/transactions/processed/scored"
+          payload_expression: "task_response:text"
+          payload_encoding: "utf-8"
+          payload_format: "text"
+
+        # Transaction error - publish errors for monitoring/DLQ
+        - name: "transaction_error_handler"
+          topic_expression: "template:fraud/transactions/errors/{{text://user_data.forward_context:transaction_id}}"
+          payload_expression: "task_response:a2a_task_response.error"
+          payload_encoding: "utf-8"
+          payload_format: "json"

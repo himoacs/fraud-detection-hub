@@ -1,26 +1,170 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
+/* Solace Brand Colors - Dark Mode (Subtle Navy Undertones) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Backgrounds - Dark with subtle Solace blue undertones */
+  --background: #0a1018;
+  --background-secondary: #101820;
+  --background-elevated: #182028;
+  
+  /* Borders - Subtle navy tints */
+  --border: #243038;
+  --border-light: #344048;
+  
+  /* Solace Green (Primary) */
+  --solace-green: #00c895;
+  --solace-green-dark: #00ad7c;
+  --solace-green-light: #00e6a8;
+  
+  /* Semantic */
+  --success: #00c895;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  
+  /* Text */
+  --foreground: #ffffff;
+  --foreground-secondary: #94a3b8;
+  --foreground-muted: #64748b;
 }
 
 @theme inline {
+  /* Backgrounds */
   --color-background: var(--background);
+  --color-background-secondary: var(--background-secondary);
+  --color-background-elevated: var(--background-elevated);
+  
+  /* Borders */
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  
+  /* Solace Green */
+  --color-solace-green: var(--solace-green);
+  --color-solace-green-dark: var(--solace-green-dark);
+  --color-solace-green-light: var(--solace-green-light);
+  
+  /* Semantic */
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  
+  /* Text */
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-foreground-secondary: var(--foreground-secondary);
+  --color-foreground-muted: var(--foreground-muted);
+  
+  /* Fonts */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
+}
+
+/* Range slider */
+input[type="range"] {
+  height: 6px;
+  background: var(--background-elevated);
+  border-radius: 3px;
+  appearance: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--solace-green);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(0, 200, 149, 0.4);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--solace-green);
+  cursor: pointer;
+  border: none;
+}
+
+/* Animations */
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 5px var(--solace-green); }
+  50% { box-shadow: 0 0 20px var(--solace-green); }
+}
+
+.animate-fade-in {
+  animation: fadeSlideIn 0.2s ease-out;
+}
+
+.animate-pulse-slow {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-glow {
+  animation: glow 2s ease-in-out infinite;
+}
+
+/* Focus styles */
+button:focus-visible,
+input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--solace-green);
 }

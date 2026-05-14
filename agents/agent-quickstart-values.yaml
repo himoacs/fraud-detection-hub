@@ -1,0 +1,110 @@
+# Sample values file for deploying a standalone SAM agent against a running
+# SAM quickstart deployment (with embedded broker, PostgreSQL, and SeaweedFS)
+# in the same cluster and namespace.
+#
+# Default values assume the SAM control plane was installed with:
+#   helm install sam <chart> --namespace <ns> --set-file global.imagePullKey=...
+#
+# Required edits before installing:
+#   1. Set `id` to a unique identifier for your agent.
+#   2. Fill in `llmService.generalModelName`, `endpoint`, `apiKey`.
+#   3. If your SAM release name is not `sam`, replace the prefix in:
+#        - solaceBroker.url host                (sam-solace-agent-mesh-broker)
+#        - persistence.existingSecrets.database (sam-postgresql)
+#        - persistence.existingSecrets.s3       (sam-solace-agent-mesh-storage)
+#   4. Verify and/or update your image pull secret configuration. Options:
+#        - Use an imagePullKey to have the agent release create and manage its own pull secret
+#        - Use imagePullSecrets to reference an existing in-namespace secret (e.g. sam-pull-secret)
+#
+# Install with an imagePullKey (replacing -n <ns> with the namespace of your SAM control plane):
+#   helm install my-quickstart-agent solace-agent-mesh/sam-agent \
+#     -n <ns> \
+#     -f agent-quickstart-values.yaml \
+#     --set-file config.yaml=/path/to/agent-quickstart-config.yaml \
+#     --set-file global.imagePullKey=/path/to/sam-pull-credentials.json
+#
+# Or, install with an existing imagePullSecrets reference (uncomment the imagePullSecrets block, then run):
+#   helm install my-quickstart-agent solace-agent-mesh/sam-agent \
+#     -n <ns> \
+#     -f agent-quickstart-values.yaml \
+#     --set-file config.yaml=/path/to/agent-quickstart-config.yaml
+
+# -----------------------------------------------------------------------------
+# Required: agent identifier (must be unique per agent in the cluster)
+# -----------------------------------------------------------------------------
+id: "my-quickstart-agent"
+
+# -----------------------------------------------------------------------------
+# Image: pulled from the same private registry as the SAM control plane.
+# -----------------------------------------------------------------------------
+global:
+  imageRegistry: gcr.io/gcp-maas-prod
+  persistence:
+    namespaceId: "solace-agent-mesh"   # must match SAM core's NAMESPACE
+
+# Uncomment to reference a pull secret that already exists in this namespace
+#imagePullSecrets:
+#  - sam-pull-secret                    # rename if your quickstart release ≠ "sam"
+
+image:
+  repository: solace-agent-mesh-enterprise
+  tag: "1.500.0"                       # bump to match your SAM control plane version
+  pullPolicy: IfNotPresent
+
+# -----------------------------------------------------------------------------
+# Broker: connect to the embedded Solace broker the quickstart deployed.
+# The chart's default ws://localhost:8080 will silently hang against the
+# embedded broker — it accepts SMF on port 55555.
+# -----------------------------------------------------------------------------
+solaceBroker:
+  url: "tcp://sam-solace-agent-mesh-broker:55555"   # rename "sam-" if your release differs
+  username: "default"
+  password: ""                          # embedded broker accepts the default user with empty password
+  vpn: "default"
+  # IMPORTANT: Use durable queues so messages persist during pod restarts/crashes
+  useTemporaryQueues: false
+
+# -----------------------------------------------------------------------------
+# Required: LLM service. Configure to match what the SAM control plane uses.
+# -----------------------------------------------------------------------------
+llmService:
+  generalModelName: ""                 # e.g. "gpt-4o" or "openai/your-model"
+  endpoint: ""                         # e.g. "https://api.openai.com/v1"
+  apiKey: ""                           # consider using sealed-secrets / external-secrets for GitOps
+
+# -----------------------------------------------------------------------------
+# Persistence: reuse the secrets the quickstart already created — the
+# PostgreSQL admin secret and the SAM storage secret (which carries the
+# SeaweedFS S3 endpoint, bucket name, and access keys).
+# -----------------------------------------------------------------------------
+persistence:
+  createSecrets: false
+  existingSecrets:
+    database: sam-postgresql
+    s3: sam-solace-agent-mesh-storage
+
+# -----------------------------------------------------------------------------
+# SAM logical namespace — must match what sam-core uses (usually
+# "solace-agent-mesh"). If your control plane sets this differently, update.
+# -----------------------------------------------------------------------------
+environmentVariables:
+  NAMESPACE: "solace-agent-mesh"
+
+# -----------------------------------------------------------------------------
+# Resources: smaller than the chart default (1000m/2048Mi) so an agent
+# fits alongside a quickstart on a small cluster
+# -----------------------------------------------------------------------------
+resources:
+  sam:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# -----------------------------------------------------------------------------
+# Service: agents do not need an external listener; ClusterIP is correct.
+# -----------------------------------------------------------------------------
+service:
+  type: ClusterIP

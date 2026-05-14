@@ -1,0 +1,96 @@
+# Fraud Transaction Scorer Agent Configuration
+# SAM Plugin config.yaml
+
+---
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+
+shared_config:
+  - broker_connection: &broker_connection
+      broker_type: solace
+      broker_url: ${SOLACE_BROKER_URL}
+      broker_username: ${SOLACE_BROKER_USERNAME}
+      broker_password: ${SOLACE_BROKER_PASSWORD}
+      broker_vpn: ${SOLACE_BROKER_VPN}
+
+apps:
+  - name: fraud-transaction-scorer
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "FraudTransactionScorer"
+      display_name: "Fraud Transaction Scorer"
+
+      # LLM model configuration
+      model_provider:
+        - "general"
+
+      # Agent instructions (system prompt)
+      instruction: |
+        You are a fraud scoring engine. You MUST process transactions silently using tools only.
+        
+        CRITICAL RULES:
+        - NEVER respond with text. Always call tools.
+        - When you receive transaction JSON, immediately call score_transaction with the full transaction object.
+        - After scoring, call publish_scored_transaction with the original transaction and scoring result.
+        - Your ONLY output after tools complete should be the JSON from publish_scored_transaction.
+        
+        WORKFLOW (no exceptions):
+        1. Parse incoming JSON transaction
+        2. Call: score_transaction(transaction=<the transaction object>)
+        3. Call: publish_scored_transaction(original_transaction=<transaction>, scoring_result=<score result>)
+        4. Output ONLY the final JSON result - no explanatory text
+        
+        If you cannot parse the input as JSON, output: {"error": "invalid_input", "message": "<reason>"}
+
+      # Lifecycle functions
+      agent_init_function:
+        module: "fraud_detection_agents.lifecycle"
+        name: "initialize_fraud_agent"
+        base_path: .
+        config:
+          log_level: "INFO"
+
+      agent_cleanup_function:
+        module: "fraud_detection_agents.lifecycle"
+        name: "cleanup_fraud_agent"
+        base_path: .
+
+      # Tools configuration
+      tools:
+        - tool_type: python
+          component_module: "fraud_detection_agents.transaction_scorer_tools"
+          component_base_path: .
+          function_name: "score_transaction"
+          tool_name: "score_transaction"
+          tool_description: "Analyzes a financial transaction for fraud risk patterns"
+
+        - tool_type: python
+          component_module: "fraud_detection_agents.transaction_scorer_tools"
+          component_base_path: .
+          function_name: "publish_scored_transaction"
+          tool_name: "publish_scored_transaction"
+          tool_description: "Publishes the scored transaction to the Solace broker"
+
+      # Agent card (describes capabilities)
+      agent_card:
+        description: "AI-powered fraud detection agent that scores transactions for risk"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "score_transaction"
+            name: "Score Transaction"
+            description: "Analyzes transactions for fraud patterns and assigns risk scores"
+          - id: "publish_scored_transaction"
+            name: "Publish Scored Transaction"
+            description: "Publishes scored transactions to downstream consumers"
+
+      # Input subscriptions
+      subscriptions:
+        - topic: fraud/transactions/raw/>
+          qos: 1

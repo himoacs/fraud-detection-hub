@@ -1,0 +1,105 @@
+# SAM Agent Configuration for Metrics Aggregator
+# Aggregates transaction metrics in real-time for dashboard visualization
+
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: metrics-aggregator.log
+
+shared_config:
+  - broker_connection: &broker_connection
+      dev_mode: ${SOLACE_DEV_MODE, false}
+      broker_url: ${SOLACE_BROKER_URL, ws://localhost:8008}
+      broker_username: ${SOLACE_BROKER_USERNAME, default}
+      broker_password: ${SOLACE_BROKER_PASSWORD, default}
+      broker_vpn: ${SOLACE_BROKER_VPN, default}      # Use durable queues for message persistence during crashes      temporary_queue: ${USE_TEMPORARY_QUEUES, true}
+
+  - models:
+      general: &general_model
+        model: ${LLM_SERVICE_GENERAL_MODEL_NAME, gpt-4o-mini}
+        api_base: ${LLM_SERVICE_ENDPOINT, https://api.openai.com/v1}
+        api_key: ${LLM_SERVICE_API_KEY}
+
+  - services:
+      session_service: &default_session_service
+        type: "memory"
+        default_behavior: "PERSISTENT"
+      artifact_service: &default_artifact_service
+        type: "memory"
+
+apps:
+  - name: metrics-aggregator-app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "FraudMetricsAggregator"
+      display_name: "Fraud Metrics Aggregator"
+      
+      agent_identity:
+        key_persistence: "/tmp/_agent_FraudMetricsAggregator.key"
+      
+      model: *general_model
+      model_provider:
+        - "general"
+      
+      instruction: |
+        You are a metrics aggregation agent that tracks fraud detection statistics in real-time.
+        
+        When asked for metrics, provide aggregated statistics including:
+        - Total transactions processed
+        - Fraud detection rate (percentage)
+        - Transaction throughput (TPS)
+        - Risk score distribution
+        - Top fraud patterns detected
+        - Geographic breakdown
+        - Decision breakdown (approved, blocked, review)
+        
+        Format your response as JSON with:
+        {
+          "total_transactions": <number>,
+          "fraud_detected": <number>,
+          "fraud_rate_percent": <number>,
+          "transactions_per_second": <number>,
+          "blocked_count": <number>,
+          "approved_count": <number>,
+          "review_count": <number>,
+          "risk_distribution": {
+            "low": <count 0-29>,
+            "medium_low": <count 30-49>,
+            "medium": <count 50-69>,
+            "medium_high": <count 70-84>,
+            "high": <count 85-100>
+          },
+          "top_patterns": [{"name": "<pattern>", "count": <number>}, ...],
+          "top_countries": [{"code": "<XX>", "count": <number>}, ...]
+        }
+      
+      session_service: *default_session_service
+      artifact_service: *default_artifact_service
+      
+      agent_card:
+        description: "Aggregates real-time fraud detection metrics including transaction rates, risk distributions, and pattern analysis"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "get_metrics"
+            name: "Get Metrics Summary"
+            description: "Returns current aggregated metrics including rates, distributions, and top patterns"
+          - id: "aggregate_transaction"
+            name: "Aggregate Transaction"
+            description: "Adds a scored transaction to the running metrics"
+      
+      agent_card_publishing:
+        interval_seconds: 10
+      
+      agent_discovery:
+        enabled: true
+      
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 30

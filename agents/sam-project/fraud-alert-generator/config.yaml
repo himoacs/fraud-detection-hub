@@ -1,0 +1,103 @@
+# Fraud Alert Generator Agent Configuration
+# SAM Plugin config.yaml
+
+---
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+
+shared_config:
+  - broker_connection: &broker_connection
+      broker_type: solace
+      broker_url: ${SOLACE_BROKER_URL}
+      broker_username: ${SOLACE_BROKER_USERNAME}
+      broker_password: ${SOLACE_BROKER_PASSWORD}
+      broker_vpn: ${SOLACE_BROKER_VPN}
+
+apps:
+  - name: fraud-alert-generator
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "FraudAlertGenerator"
+      display_name: "Fraud Alert Generator"
+
+      model_provider:
+        - "general"
+
+      instruction: |
+        You are an alert generation engine. Process scored transactions silently using tools only.
+        
+        CRITICAL RULES:
+        - NEVER respond with text. Always call tools.
+        - Parse incoming scored transaction JSON immediately.
+        - Call evaluate_alert_criteria first, then generate_alert and publish_alert if needed.
+        - Output ONLY JSON - no explanatory text.
+        
+        WORKFLOW:
+        1. Parse scored transaction JSON (contains risk_score, decision, detected_patterns)
+        2. Call: evaluate_alert_criteria(transaction=<transaction>)
+        3. If needs_alert=true: Call generate_alert, then publish_alert
+        4. Output ONLY: {"needs_alert": true/false, "alert_id": "...", "severity": "...", "headline": "..."}
+           Or if no alert: {"needs_alert": false, "reason": "Risk score below threshold"}
+        
+        SEVERITY (must match exactly):
+        - critical: risk_score >= 90
+        - high: risk_score >= 80
+        - medium: risk_score >= 70
+
+      agent_init_function:
+        module: "fraud_detection_agents.lifecycle"
+        name: "initialize_fraud_agent"
+        base_path: .
+        config:
+          log_level: "INFO"
+
+      agent_cleanup_function:
+        module: "fraud_detection_agents.lifecycle"
+        name: "cleanup_fraud_agent"
+        base_path: .
+
+      tools:
+        - tool_type: python
+          component_module: "fraud_detection_agents.alert_generator_tools"
+          component_base_path: .
+          function_name: "evaluate_alert_criteria"
+          tool_name: "evaluate_alert_criteria"
+          tool_config:
+            alert_threshold: 70
+
+        - tool_type: python
+          component_module: "fraud_detection_agents.alert_generator_tools"
+          component_base_path: .
+          function_name: "generate_alert"
+          tool_name: "generate_alert"
+
+        - tool_type: python
+          component_module: "fraud_detection_agents.alert_generator_tools"
+          component_base_path: .
+          function_name: "publish_alert"
+          tool_name: "publish_alert"
+
+      agent_card:
+        description: "Generates actionable alerts for high-risk fraud transactions"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "evaluate_alert_criteria"
+            name: "Evaluate Alert Criteria"
+            description: "Determines if a transaction requires an alert"
+          - id: "generate_alert"
+            name: "Generate Alert"
+            description: "Creates a detailed alert for fraud analysts"
+          - id: "publish_alert"
+            name: "Publish Alert"
+            description: "Sends the alert to the alerts topic"
+
+      subscriptions:
+        - topic: fraud/transactions/scored/>
+          qos: 1

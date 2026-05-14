@@ -1,0 +1,94 @@
+# SAM Agent Configuration for Transaction Scorer
+# A simple fraud detection agent that uses LLM to analyze transactions
+
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: transaction-scorer.log
+
+shared_config:
+  - broker_connection: &broker_connection
+      dev_mode: ${SOLACE_DEV_MODE, false}
+      broker_url: ${SOLACE_BROKER_URL, ws://localhost:8008}
+      broker_username: ${SOLACE_BROKER_USERNAME, default}
+      broker_password: ${SOLACE_BROKER_PASSWORD, default}
+      broker_vpn: ${SOLACE_BROKER_VPN, default}
+      # Use durable queues for message persistence during crashes
+      temporary_queue: ${USE_TEMPORARY_QUEUES, false}
+
+  # Use SAM's shared model configuration (configured via SAM UI)
+  # model_provider: ["general"] tells the agent to use SAM's "general" model
+
+  - services:
+      session_service: &default_session_service
+        type: "memory"
+        default_behavior: "PERSISTENT"
+      artifact_service: &default_artifact_service
+        type: "memory"
+
+apps:
+  - name: transaction-scorer-app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "FraudTransactionScorer"
+      display_name: "Fraud Transaction Scorer"
+      
+      agent_identity:
+        key_persistence: "/tmp/_agent_FraudTransactionScorer.key"
+      
+      # Use SAM's shared model config (model_provider tells SAM which model to use)
+      model_provider:
+        - "general"
+      
+      instruction: |
+        You are a fraud detection expert that analyzes financial transactions.
+        
+        When given transaction data, analyze it for fraud risk considering:
+        - Transaction amount (very high or micro transactions are suspicious)
+        - Transaction velocity (many transactions in short time)
+        - Geographic patterns (transactions from unusual locations)
+        - Device information (new devices, VPN usage)
+        - Merchant categories and patterns
+        
+        Always provide:
+        1. A risk score from 0-100 (0=safe, 100=definite fraud)
+        2. A decision: "approved" (score<50), "review" (50-79), or "blocked" (80+)
+        3. List of detected fraud patterns
+        4. Clear reasoning for your assessment
+        
+        Format your response as JSON with these fields:
+        {
+          "risk_score": <number>,
+          "decision": "<string>",
+          "patterns": ["<pattern1>", ...],
+          "reasoning": "<explanation>"
+        }
+      
+      session_service: *default_session_service
+      artifact_service: *default_artifact_service
+      
+      agent_card:
+        description: "Analyzes financial transactions and assigns fraud risk scores using AI-powered pattern detection"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "analyze_fraud"
+            name: "Analyze Transaction Fraud"
+            description: "Analyze a financial transaction for fraud risk and return a score with reasoning"
+      
+      agent_card_publishing:
+        interval_seconds: 10
+      
+      agent_discovery:
+        enabled: true
+      
+      inter_agent_communication:
+        allow_list: []
+        request_timeout_seconds: 30
+

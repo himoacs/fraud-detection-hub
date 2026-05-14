@@ -1,0 +1,57 @@
+# Values file for deploying Fraud Transaction Scorer to SAM
+# Based on agent-mesh Helm release
+
+# Agent identifier (must be unique)
+id: "fraud-transaction-scorer"
+
+# Image configuration - using locally loaded image
+global:
+  imageRegistry: ""  # Empty since using local image
+  persistence:
+    namespaceId: "solace-agent-mesh"
+
+image:
+  repository: solace-agent-mesh-enterprise
+  tag: "1.211.0"  # Using the same version as SAM core
+  pullPolicy: Never  # Image is pre-loaded in minikube
+
+# Broker configuration - connects to the same broker as SAM core
+solaceBroker:
+  url: "ws://host.docker.internal:8008"
+  username: "sam"
+  password: "sam"
+  vpn: "sam"
+  # IMPORTANT: Use durable queues for message persistence
+  # Messages accumulate while SAM Core is down and are processed on recovery
+  useTemporaryQueues: false
+
+# LLM Service configuration  
+# Using SAM's LiteLLM proxy endpoint
+llmService:
+  generalModelName: "gemini-flash-2"
+  endpoint: "https://lite-llm.mymaas.net"
+  apiKey: ""  # Will get from SAM's shared config via model_provider
+
+# Reuse persistence secrets from agent-mesh deployment
+persistence:
+  createSecrets: false
+  existingSecrets:
+    database: agent-mesh-postgresql
+    s3: agent-mesh-solace-agent-mesh-storage
+
+# SAM namespace
+environmentVariables:
+  NAMESPACE: "solace-agent-mesh"
+
+# Resource limits
+resources:
+  sam:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+service:
+  type: ClusterIP

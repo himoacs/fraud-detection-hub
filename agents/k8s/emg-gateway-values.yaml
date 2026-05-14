@@ -1,0 +1,134 @@
+# Event Mesh Gateway Configuration
+# Enables event-driven transaction processing through SAM with queue-based backpressure
+#
+# Architecture:
+#   Frontend → Solace Queue → Gateway (buffers N messages) → Agent → ACK
+#                    ↑                                          ↓
+#                    └───────── Redeliver if NACK/timeout ──────┘
+#
+# Key Features:
+# - Queue-based subscriptions (qos: 1) for message persistence
+# - Deferred acknowledgment (on_completion) for at-least-once delivery
+# - Broker-side flow control via max-delivered-unacked-msgs-per-flow
+
+# Gateway type
+gatewayType: "event_mesh"
+
+# System purpose
+systemPurpose: |
+  The system is an AI-powered fraud detection platform.
+  It analyzes financial transactions in real-time using AI agents.
+  Always provide clear, actionable fraud assessments.
+
+# Gateway-level acknowledgment policy (can be overridden per handler)
+# mode: "on_completion" = messages stay unacked until agent finishes
+acknowledgmentPolicy:
+  mode: "on_completion"
+  onFailure:
+    action: "nack"
+    nackOutcome: "rejected"  # Redeliver failed messages
+  timeoutSeconds: 120        # 2 minute timeout per task
+
+# ============================================================================
+# BROKER QUEUE CONFIGURATION (run on Solace broker CLI or Broker Manager)
+# ============================================================================
+# For each queue created by qos:1 subscriptions, configure:
+#
+# 1. Limit concurrent processing (backpressure):
+#    solace(configure/message-spool/queue)# max-delivered-unacked-msgs-per-flow 5
+#
+# 2. Prevent infinite retry loops:
+#    solace(configure/message-spool/queue)# max-redelivery 3
+#
+# 3. Configure dead message queue (DMQ) for failed messages:
+#    solace(configure/message-spool/queue)# dead-message-queue "fraud-dmq"
+# ============================================================================
+
+# Event handlers - route incoming events to agents via queues
+eventHandlers:
+  # Handler 1: Score incoming transactions
+  # qos: 1 enables guaranteed delivery
+  - name: "score_transaction"
+    subscriptions:
+      - topic: "solace/fraud/v1/transactions/inbound/>"
+        qos: 1  # Guaranteed delivery
+    # Route directly to scorer agent (bypass orchestrator for speed)
+    targetAgentName: "agent_019e24ab_d43f_7ec1_88a6_415223d84c45"
+    inputExpression: |
+      template:Analyze this financial transaction for fraud risk.
+
+      Transaction Data:
+      {{input.payload}}
+
+      Return a JSON object with these exact fields:
+      - transaction_id: string (from input)
+      - risk_score: number 0-100
+      - risk_level: string (low if <50, medium if 50-69, high if 70-89, critical if >=90)
+      - decision: string (approved if <50, review if 50-79, blocked if >=80)
+      - detected_patterns: array of strings
+      - reasoning: string
+    payloadFormat: "json"
+    defaultUserIdentity: "event-mesh-scorer"
+    onSuccess: "score_transaction_success"
+    onError: "score_transaction_error"
+    # Handler-level ACK policy (inherits gateway default, customize timeout)
+    acknowledgmentPolicy:
+      mode: "on_completion"
+      timeoutSeconds: 60  # Scorer should respond within 60s
+
+  # Handler 2: Generate alerts for high-risk transactions
+  # Triggered by scored transactions published to scored topic
+  - name: "generate_alert"
+    subscriptions:
+      - topic: "solace/fraud/v1/transactions/scored"
+        qos: 1  # Guaranteed delivery
+    targetAgentName: "agent_019e24ac_a8cd_74b3_b1a2_234bc94ef42a"
+    inputExpression: |
+      template:A transaction was scored. Check if it needs an alert.
+
+      Scored Transaction:
+      {{input.payload}}
+
+      If risk_score >= 70, generate a fraud alert. Return JSON with:
+      - transaction_id: string
+      - needs_alert: boolean (true if risk_score >= 70)
+      - alert_id: string (generate UUID if needs_alert)
+      - severity: string (critical if >=90, high if >=80, medium if >=70)
+      - headline: string (brief alert description)
+    payloadFormat: "text"
+    defaultUserIdentity: "event-mesh-alerter"
+    onSuccess: "generate_alert_success"
+    onError: "generate_alert_error"
+    acknowledgmentPolicy:
+      mode: "on_completion"
+      timeoutSeconds: 30  # Alert generation should be quick
+
+# Output handlers - publish results back to event mesh
+outputHandlers:
+  # Scored transaction output
+  - name: "score_transaction_success"
+    topicExpression: "static:solace/fraud/v1/transactions/scored"
+    payloadExpression: "task_response:text"
+
+  # Scoring error output
+  - name: "score_transaction_error"
+    topicExpression: "static:solace/fraud/v1/errors/scoring"
+    payloadExpression: "task_response:a2a_task_response.error"
+
+  # Alert output
+  - name: "generate_alert_success"
+    topicExpression: "static:solace/fraud/v1/alerts"
+    payloadExpression: "task_response:text"
+
+  # Alert error output
+  - name: "generate_alert_error"
+    topicExpression: "static:solace/fraud/v1/errors/alerting"
+    payloadExpression: "task_response:a2a_task_response.error"
+
+# Artifact service config
+artifactService:
+  type: "memory"
+
+# Authorization (none for dev)
+authorizationService:
+  type: "none"

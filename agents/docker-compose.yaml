@@ -1,0 +1,85 @@
+version: "3.9"
+
+services:
+  # Solace PubSub+ Broker (if not using external)
+  solace:
+    image: solace/solace-pubsub-standard:latest
+    hostname: solace
+    ports:
+      - "8008:8008"   # WebSocket
+      - "8080:8080"   # SEMP
+      - "55555:55555" # SMF
+      - "55003:55003" # SMF Compressed
+      - "55443:55443" # SMF TLS
+    environment:
+      - username_admin_globalaccesslevel=admin
+      - username_admin_password=admin
+    shm_size: "1g"
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 2448
+        hard: 6592
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health-check/guaranteed-active"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Transaction Scorer Agent
+  transaction-scorer:
+    build:
+      context: .
+      args:
+        AGENT_NAME: transaction_scorer
+    environment:
+      - SOLACE_HOST=ws://solace:8008
+      - SOLACE_VPN=default
+      - SOLACE_USERNAME=demo
+      - SOLACE_PASSWORD=demo
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - LITELLM_MODEL=gpt-4o-mini
+    depends_on:
+      solace:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Alert Generator Agent
+  alert-generator:
+    build:
+      context: .
+      args:
+        AGENT_NAME: alert_generator
+    environment:
+      - SOLACE_HOST=ws://solace:8008
+      - SOLACE_VPN=default
+      - SOLACE_USERNAME=demo
+      - SOLACE_PASSWORD=demo
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - LITELLM_MODEL=gpt-4o-mini
+      - ALERT_THRESHOLD=70
+    depends_on:
+      solace:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Metrics Aggregator Agent
+  metrics-aggregator:
+    build:
+      context: .
+      args:
+        AGENT_NAME: metrics_aggregator
+    environment:
+      - SOLACE_HOST=ws://solace:8008
+      - SOLACE_VPN=default
+      - SOLACE_USERNAME=demo
+      - SOLACE_PASSWORD=demo
+      - METRICS_INTERVAL_SECONDS=1
+    depends_on:
+      solace:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  default:
+    name: fraud-detection-network

@@ -1,0 +1,97 @@
+# Fraud Metrics Aggregator Agent Configuration
+# SAM Plugin config.yaml
+
+---
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+
+shared_config:
+  - broker_connection: &broker_connection
+      broker_type: solace
+      broker_url: ${SOLACE_BROKER_URL}
+      broker_username: ${SOLACE_BROKER_USERNAME}
+      broker_password: ${SOLACE_BROKER_PASSWORD}
+      broker_vpn: ${SOLACE_BROKER_VPN}
+
+apps:
+  - name: fraud-metrics-aggregator
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE}
+      supports_streaming: true
+      agent_name: "FraudMetricsAggregator"
+      display_name: "Fraud Metrics Aggregator"
+
+      # No LLM needed for pure aggregation
+      model_provider:
+        - "general"
+
+      instruction: |
+        You are a metrics aggregation engine. Process transactions silently using tools only.
+        
+        CRITICAL RULES:
+        - NEVER respond with text. Always call tools.
+        - Parse incoming scored transaction JSON immediately.
+        - Call aggregate_transaction for each transaction.
+        - Output ONLY the JSON result from the tool.
+        
+        WORKFLOW:
+        1. Parse scored transaction JSON
+        2. Call: aggregate_transaction(transaction=<transaction>)
+        3. Output ONLY the JSON result: {"status": "aggregated", "metrics": {...}}
+        
+        Do NOT explain what you're doing. Just call the tool and return its output.
+
+      agent_init_function:
+        module: "fraud_detection_agents.lifecycle"
+        name: "initialize_fraud_agent"
+        base_path: .
+        config:
+          log_level: "INFO"
+
+      agent_cleanup_function:
+        module: "fraud_detection_agents.lifecycle"
+        name: "cleanup_fraud_agent"
+        base_path: .
+
+      tools:
+        - tool_type: python
+          component_module: "fraud_detection_agents.metrics_aggregator_tools"
+          component_base_path: .
+          function_name: "aggregate_transaction"
+          tool_name: "aggregate_transaction"
+
+        - tool_type: python
+          component_module: "fraud_detection_agents.metrics_aggregator_tools"
+          component_base_path: .
+          function_name: "get_metrics_summary"
+          tool_name: "get_metrics_summary"
+
+        - tool_type: python
+          component_module: "fraud_detection_agents.metrics_aggregator_tools"
+          component_base_path: .
+          function_name: "reset_metrics"
+          tool_name: "reset_metrics"
+
+      agent_card:
+        description: "Aggregates real-time fraud detection metrics"
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "aggregate_transaction"
+            name: "Aggregate Transaction"
+            description: "Updates metrics from a scored transaction"
+          - id: "get_metrics_summary"
+            name: "Get Metrics Summary"
+            description: "Returns comprehensive metrics summary"
+          - id: "reset_metrics"
+            name: "Reset Metrics"
+            description: "Resets all metrics to zero"
+
+      subscriptions:
+        - topic: fraud/transactions/scored/>
+          qos: 1
