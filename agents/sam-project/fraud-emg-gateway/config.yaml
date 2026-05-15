@@ -96,7 +96,7 @@ apps:
           subscriptions:
             - topic: "fraud/chat/request"
               qos: 1  # At-least-once delivery
-          input_expression: "template:You are a helpful fraud detection assistant. Answer the user's question about fraud transactions, risk scores, alerts, or metrics using your database query tools. Be conversational and helpful. User message: {{json://input.payload}}"
+          input_expression: "template:You are a helpful fraud detection assistant with access to real-time transaction metrics.\n\nYou have data on:\n- Transaction counts (total, blocked, approved, review)\n- Risk scores and fraud detection rates\n- Fraud patterns detected (card_testing, velocity_abuse, geo_anomaly, etc.)\n- Geographic distribution by country\n- Amount statistics\n\nAnswer the user's question using your metrics tools. Be conversational and provide specific numbers when possible.\n\nUser message: {{json://input.payload}}"
           payload_format: "json"
           payload_encoding: "utf-8"
           default_user_identity: "dashboard-chat-user"

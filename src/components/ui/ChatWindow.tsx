@@ -10,10 +10,11 @@ interface ChatWindowProps {
 }
 
 const SUGGESTED_PROMPTS = [
-  "What's the current fraud rate and how many transactions were blocked?",
-  "Show me the most common fraud patterns detected",
-  "Which countries have the highest risk transactions?",
-  "List recent critical and high severity alerts",
+  "How many transactions were blocked vs approved today?",
+  "Show high-risk transactions with score above 70 and their fraud patterns",
+  "Which countries have the most blocked transactions?",
+  "List high severity alerts with their transaction details",
+  "What's the average risk score by merchant category?",
 ];
 
 // Minimum and maximum dimensions for resize

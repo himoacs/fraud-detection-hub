@@ -282,9 +282,9 @@ export async function POST(request: NextRequest) {
           const requestId = `req-${Date.now()}`;
           const messageId = `msg-${Date.now()}`;
           
-          // Route directly to Fraud Analytics Agent for database queries
-          // This agent has the SQL connector to PostgreSQL
-          const FRAUD_ANALYTICS_AGENT = "agent_019e2800_ac7f_78e0_93da_5c1ab2140fa4";
+          // Route to OrchestratorAgent which will delegate to appropriate agents
+          // The Orchestrator has access to all registered agents including those with SQL connectors
+          const TARGET_AGENT = "OrchestratorAgent";
           
           const jsonRpcRequest = {
             id: requestId,
@@ -295,7 +295,7 @@ export async function POST(request: NextRequest) {
                 contextId: contextId,
                 kind: "message",
                 messageId: messageId,
-                metadata: { agent_name: FRAUD_ANALYTICS_AGENT },
+                metadata: { agent_name: TARGET_AGENT },
                 parts: [{ kind: "text", text: message }],
                 role: "user",
               },

@@ -283,7 +283,80 @@ kubectl get pods | grep sam-agent
 kubectl logs sam-agent-... --tail=50
 ```
 
-## 📁 Project Structure
+### Access SAM UI
+**Note:** Port 8000 is used by the Solace broker container. The SAM UI frontend expects the API at `localhost:8000`, causing a conflict when both are running.
+
+**Workaround:** Stop the Solace broker temporarily or access SAM UI from a separate environment.
+
+```bash
+# UI only (limited functionality without API):
+kubectl port-forward -n default svc/agent-mesh-solace-agent-mesh-core 8888:80
+
+# Then open http://localhost:8888
+```
+
+## �️ Database Persistence
+
+The fraud detection system persists all events to PostgreSQL for analytics and SAM agent SQL queries.
+
+### Architecture
+
+```
+Solace Queues                    PostgreSQL Tables
+┌──────────────────────────┐     ┌──────────────────────────┐
+│ fraud/q/db-raw-transactions  ──▶ │ raw_transactions         │
+├──────────────────────────┤     ├──────────────────────────┤
+│ fraud/q/db-scored-transactions ─▶│ scored_transactions      │
+├──────────────────────────┤     ├──────────────────────────┤
+│ fraud/q/db-alerts        │ ──▶ │ alerts                   │
+└──────────────────────────┘     └──────────────────────────┘
+```
+
+### Tables Overview
+
+| Table | Key Fields | Purpose |
+|-------|------------|---------|
+| `raw_transactions` | transaction_id, amount, merchant_name, country | Incoming transactions |
+| `scored_transactions` | risk_score, risk_level, decision, detected_patterns | AI-scored results |
+| `alerts` | alert_generated, severity, alert_type, reason | Generated alerts |
+
+### Start Persistence Service
+
+```bash
+# Build and run
+cd agents/docker-micro-integration
+docker build -f Dockerfile.persistence -t fraud-persistence:latest .
+docker run -d --name fraud-db-persistence \
+  --network demo-net \
+  -e SOLACE_BROKER_URL=ws://solace:8008 \
+  -e POSTGRES_HOST=host.docker.internal \
+  fraud-persistence:latest
+```
+
+### Example Queries
+
+```sql
+-- High-risk blocked transactions
+SELECT r.transaction_id, r.amount, s.risk_score, s.decision
+FROM raw_transactions r
+JOIN scored_transactions s ON r.transaction_id = s.transaction_id
+WHERE s.decision = 'blocked';
+
+-- Fraud patterns by country
+SELECT r.country, unnest(s.detected_patterns) as pattern, COUNT(*)
+FROM raw_transactions r
+JOIN scored_transactions s ON r.transaction_id = s.transaction_id
+GROUP BY r.country, pattern;
+
+-- Recent high-severity alerts
+SELECT transaction_id, alert_type, severity
+FROM alerts
+WHERE alert_generated = true AND severity = 'high';
+```
+
+📖 **Full documentation**: See [agents/docker-micro-integration/README.md](agents/docker-micro-integration/README.md)
+
+## �📁 Project Structure
 
 ```
 fraud-detection-hub/
@@ -316,6 +389,10 @@ fraud-detection-hub/
 │   │   ├── fraud-detection-agents/
 │   │   ├── fraud-emg-gateway/
 │   │   └── fraud-alert-generator/
+│   ├── docker-micro-integration/ # Database persistence
+│   │   ├── README.md             # Full documentation
+│   │   ├── persistence_service.py
+│   │   └── Dockerfile.persistence
 │   └── scripts/
 │       └── configure-queues.sh   # Queue backpressure setup
 │

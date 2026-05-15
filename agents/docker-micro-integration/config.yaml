@@ -1,0 +1,42 @@
+# SAM Enterprise SQL Micro-Integration - Simple approach
+log:
+  stdout_log_level: DEBUG
+
+flows:
+  # Flow 1: Persist Raw Transactions using sql_insert
+  - name: persist_raw_transactions
+    components:
+      - component_name: raw_input
+        component_module: broker_input
+        component_config:
+          broker_type: solace
+          broker_url: ${SOLACE_BROKER_URL}
+          broker_vpn: ${SOLACE_BROKER_VPN}
+          broker_username: ${SOLACE_BROKER_USERNAME}
+          broker_password: ${SOLACE_BROKER_PASSWORD}
+          broker_queue_name: fraud/q/db-raw-transactions
+          broker_subscriptions: []
+          payload_format: json
+
+      - component_name: insert_raw
+        component_module: sql_insert
+        component_config:
+          database_type: postgres
+          sql_host: ${POSTGRES_HOST}
+          sql_port: ${POSTGRES_PORT}
+          sql_user: ${POSTGRES_USER}
+          sql_password: ${POSTGRES_PASSWORD}
+          sql_database: ${POSTGRES_DATABASE}
+        input_transforms:
+          - type: copy
+            source_value: raw_events
+            dest_expression: user_data.table_name
+          - type: copy
+            source_expression: input.topic
+            dest_expression: user_data.data.topic
+          - type: copy
+            source_expression: self.invoke_with_modules(lambda payload, json: json.dumps(payload), input.payload, __import__('json'))
+            dest_expression: user_data.data.payload
+          - type: copy
+            source_expression: user_data
+            dest_expression: input.payload

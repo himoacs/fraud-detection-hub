@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-db-persistence-config
+  namespace: default
+data:
+  config.yaml: |
+    # Fraud Database Persistence Connector
+    
+    log:
+      stdout_log_level: DEBUG
+      log_file_level: DEBUG
+      log_file: /tmp/fraud-db-persistence.log
+
+    apps:
+      - name: fraud_db_persistence
+        app_base_path: "."
+        app_module: solace_ai_connector.flow.app
+        
+        broker:
+          dev_mode: ${SOLACE_DEV_MODE, false}
+          broker_url: ${SOLACE_BROKER_URL}
+          broker_username: ${SOLACE_BROKER_USERNAME}
+          broker_password: ${SOLACE_BROKER_PASSWORD}
+          broker_vpn: ${SOLACE_BROKER_VPN}
+          temporary_queue: false
+          
+        flows:
+          - name: persist_scored_transactions
+            components:
+              - component_name: scored_transaction_input
+                component_module: broker_input
+                component_config:
+                  broker_queue_name: fraud/q/db-scored-transactions
+                  broker_subscriptions:
+                    - topic: solace/fraud/v1/transactions/scored
+                      qos: 1
+                  payload_encoding: utf-8
+                  payload_format: json
+                  
+              - component_name: insert_scored_transaction
+                component_module: sql_insert
+                component_config:
+                  database_type: postgres
+                  sql_host: ${POSTGRES_HOST}
+                  sql_port: ${POSTGRES_PORT}
+                  sql_user: ${POSTGRES_USER}
+                  sql_password: ${POSTGRES_PASSWORD}
+                  sql_database: ${POSTGRES_DATABASE}
+                input_transforms:
+                  - type: copy
+                    source_expression: |
+                      static:{
+                        "table_name": "transactions",
+                        "data": {}
+                      }
+                    dest_expression: user_data.sql_input
+                  - type: copy
+                    source_expression: input.payload.transaction_id
+                    dest_expression: user_data.sql_input.data.transaction_id
+                  - type: copy
+                    source_expression: input.payload.amount
+                    dest_expression: user_data.sql_input.data.amount
+                  - type: copy
+                    source_expression: input.payload.risk_score
+                    dest_expression: user_data.sql_input.data.risk_score
+                  - type: copy
+                    source_expression: input.payload.decision
+                    dest_expression: user_data.sql_input.data.decision
+                  - type: copy
+                    source_expression: user_data.sql_input
+                    dest_expression: input.payload
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-db-persistence
+  namespace: default
+  labels:
+    app: fraud-db-persistence
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fraud-db-persistence
+  template:
+    metadata:
+      labels:
+        app: fraud-db-persistence
+    spec:
+      containers:
+        - name: connector
+          image: solace-agent-mesh-enterprise:1.211.0
+          imagePullPolicy: IfNotPresent
+          command: ["solace-ai-connector"]
+          args: ["/config/config.yaml"]
+          env:
+            - name: SOLACE_DEV_MODE
+              value: "false"
+            - name: SOLACE_BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mesh-solace-agent-mesh-core-secrets
+                  key: SOLACE_BROKER_URL
+            - name: SOLACE_BROKER_VPN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mesh-solace-agent-mesh-core-secrets
+                  key: SOLACE_BROKER_VPN
+            - name: SOLACE_BROKER_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mesh-solace-agent-mesh-core-secrets
+                  key: SOLACE_BROKER_USERNAME
+            - name: SOLACE_BROKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mesh-solace-agent-mesh-core-secrets
+                  key: SOLACE_BROKER_PASSWORD
+            - name: POSTGRES_HOST
+              value: "agent-mesh-postgresql"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mesh-postgresql
+                  key: PGUSER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mesh-postgresql
+                  key: PGPASSWORD
+            - name: POSTGRES_DATABASE
+              value: "fraud_detection"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: config
+          configMap:
+            name: fraud-db-persistence-config

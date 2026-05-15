@@ -1,0 +1,192 @@
+# Fraud Database Persistence Connector
+# Persists all fraud transactions and alerts to PostgreSQL for chat-based queries
+#
+# Data Flow:
+#   - Raw transactions → raw_transactions table
+#   - Scored transactions → transactions table  
+#   - Alerts → alerts table
+
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: ${LOG_FILE:fraud-db-persistence.log}
+
+# Shared SQL database configuration
+shared_config:
+  - postgres_config: &postgres_config
+      database_type: postgres
+      sql_host: ${POSTGRES_HOST:agent-mesh-postgresql}
+      sql_port: ${POSTGRES_PORT:5432}
+      sql_user: ${POSTGRES_USER:postgres}
+      sql_password: ${POSTGRES_PASSWORD:password}
+      sql_database: ${POSTGRES_DATABASE:fraud_detection}
+
+# Solace broker configuration  
+  - broker_config: &broker_config
+      broker_type: solace
+      broker_url: ${SOLACE_BROKER_URL:tcp://solace:55555}
+      broker_vpn: ${SOLACE_BROKER_VPN:sam}
+      broker_username: ${SOLACE_BROKER_USERNAME:sam}
+      broker_password: ${SOLACE_BROKER_PASSWORD:sam}
+
+flows:
+
+  # =================================================================
+  # Flow 1: Persist Raw Transactions
+  # Subscribes to inbound transactions and stores them before scoring
+  # =================================================================
+  - name: persist_raw_transactions
+    components:
+      # Input: Subscribe to raw transaction queue
+      - component_name: raw_transaction_input
+        component_module: broker_input
+        component_config:
+          <<: *broker_config
+          broker_queue_name: fraud/q/db-raw-transactions
+          broker_subscriptions:
+            - topic: solace/fraud/v1/transactions/inbound/>
+              qos: 1
+          payload_encoding: utf-8
+          payload_format: json
+          
+      # Transform: Map transaction JSON to table columns
+      - component_name: transform_raw_transaction
+        component_module: aggregate
+        component_config:
+          max_items: 1
+          aggregate_expression: |
+            template:{
+              "table_name": "raw_transactions",
+              "data": {
+                "transaction_id": "{{input.payload.transaction_id}}",
+                "amount": {{input.payload.amount}},
+                "currency": "{{input.payload.currency:USD}}",
+                "timestamp": "{{input.payload.timestamp}}",
+                "merchant_name": "{{input.payload.merchant.name:Unknown}}",
+                "merchant_category": "{{input.payload.merchant.category:unknown}}",
+                "merchant_country": "{{input.payload.merchant.country:XX}}",
+                "merchant_city": "{{input.payload.merchant.city:Unknown}}",
+                "card_type": "{{input.payload.card.type:unknown}}",
+                "card_last_four": "{{input.payload.card.last_four:0000}}",
+                "device_fingerprint": "{{input.payload.device.fingerprint:unknown}}",
+                "device_type": "{{input.payload.device.type:unknown}}",
+                "ip_address": "{{input.payload.device.ip_address:0.0.0.0}}",
+                "raw_payload": {{input.payload:json}},
+                "scored": false
+              },
+              "on_duplicate_update_columns": ["scored", "scored_at"]
+            }
+            
+      # Output: Insert into PostgreSQL
+      - component_name: insert_raw_transaction
+        component_module: sql_insert
+        component_config:
+          <<: *postgres_config
+
+  # =================================================================
+  # Flow 2: Persist Scored Transactions
+  # Subscribes to scored transactions and stores risk assessment
+  # =================================================================
+  - name: persist_scored_transactions
+    components:
+      # Input: Subscribe to scored transaction queue
+      - component_name: scored_transaction_input
+        component_module: broker_input
+        component_config:
+          <<: *broker_config
+          broker_queue_name: fraud/q/db-scored-transactions
+          broker_subscriptions:
+            - topic: solace/fraud/v1/transactions/scored
+              qos: 1
+          payload_encoding: utf-8
+          payload_format: json
+          
+      # Transform: Map scored transaction to table columns
+      - component_name: transform_scored_transaction
+        component_module: aggregate
+        component_config:
+          max_items: 1
+          aggregate_expression: |
+            template:{
+              "table_name": "transactions",
+              "data": {
+                "transaction_id": "{{input.payload.transaction_id}}",
+                "timestamp": "{{input.payload.timestamp}}",
+                "amount": {{input.payload.amount}},
+                "currency": "{{input.payload.currency:USD}}",
+                "risk_score": {{input.payload.risk_score:0}},
+                "confidence": {{input.payload.confidence:0.5}},
+                "decision": "{{input.payload.decision:review}}",
+                "detected_patterns": {{input.payload.detected_patterns:[]:json}},
+                "agent_reasoning": "{{input.payload.reasoning:}}",
+                "merchant_name": "{{input.payload.merchant.name:Unknown}}",
+                "merchant_category": "{{input.payload.merchant.category:unknown}}",
+                "merchant_country": "{{input.payload.merchant.country:XX}}",
+                "merchant_city": "{{input.payload.merchant.city:Unknown}}",
+                "device_fingerprint": "{{input.payload.device.fingerprint:unknown}}",
+                "device_type": "{{input.payload.device.type:unknown}}",
+                "vpn_detected": {{input.payload.device.vpn_detected:false}},
+                "new_device": {{input.payload.device.is_new:false}},
+                "velocity_txns_last_hour": {{input.payload.velocity.txns_last_hour:0}},
+                "velocity_txns_last_day": {{input.payload.velocity.txns_last_day:0}},
+                "is_fraud": {{input.payload.is_fraud:false}},
+                "fraud_pattern": "{{input.payload.fraud_pattern:}}"
+              },
+              "on_duplicate_update_columns": ["risk_score", "confidence", "decision", "detected_patterns", "agent_reasoning"]
+            }
+            
+      # Output: Insert into PostgreSQL
+      - component_name: insert_scored_transaction
+        component_module: sql_insert
+        component_config:
+          <<: *postgres_config
+
+  # =================================================================
+  # Flow 3: Persist Alerts
+  # Subscribes to alerts and stores for historical analysis
+  # =================================================================
+  - name: persist_alerts
+    components:
+      # Input: Subscribe to alerts queue
+      - component_name: alert_input
+        component_module: broker_input
+        component_config:
+          <<: *broker_config
+          broker_queue_name: fraud/q/db-alerts
+          broker_subscriptions:
+            - topic: solace/fraud/v1/alerts
+              qos: 1
+          payload_encoding: utf-8
+          payload_format: json
+          
+      # Transform: Handle both flat and nested alert structures
+      # LLM may return {alert_generated: true, alert: {...}} or flat {...}
+      - component_name: transform_alert
+        component_module: aggregate
+        component_config:
+          max_items: 1
+          aggregate_expression: |
+            template:{
+              "table_name": "alerts",
+              "data": {
+                "alert_id": "{{input.payload.alert.alert_id}}{{input.payload.alert_id}}{{input.payload.id}}",
+                "timestamp": "{{input.payload.alert.timestamp}}{{input.payload.timestamp}}",
+                "severity": "{{input.payload.alert.severity}}{{input.payload.severity:medium}}",
+                "headline": "{{input.payload.alert.headline}}{{input.payload.headline:Fraud Alert}}",
+                "transaction_id": "{{input.payload.alert.transaction_id}}{{input.payload.transaction_id}}",
+                "risk_score": {{input.payload.alert.risk_score}}{{input.payload.risk_score:0}},
+                "primary_pattern": "{{input.payload.alert.detected_patterns[0]}}{{input.payload.detected_patterns[0]:unknown}}",
+                "all_patterns": {{input.payload.alert.detected_patterns}}{{input.payload.detected_patterns:[]:json}},
+                "amount": {{input.payload.alert.amount}}{{input.payload.amount:0}},
+                "currency": "{{input.payload.alert.currency}}{{input.payload.currency:USD}}",
+                "merchant_name": "{{input.payload.alert.merchant_name}}{{input.payload.merchant_name:Unknown}}",
+                "merchant_country": "{{input.payload.alert.merchant_country}}{{input.payload.merchant_country:XX}}"
+              },
+              "on_duplicate_update_columns": ["acknowledged", "acknowledged_at", "acknowledged_by"]
+            }
+            
+      # Output: Insert into PostgreSQL
+      - component_name: insert_alert
+        component_module: sql_insert
+        component_config:
+          <<: *postgres_config
