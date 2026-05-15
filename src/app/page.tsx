@@ -178,7 +178,7 @@ export default function Dashboard() {
                   </p>
                 ) : (
                   alerts.map((alert) => (
-                    <AlertCard key={alert.id} alert={alert} />
+                    <AlertCard key={alert.alert_id} alert={alert} />
                   ))
                 )}
               </div>

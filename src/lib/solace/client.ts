@@ -41,8 +41,9 @@ export class SolaceClient {
         });
 
         this.session.on(solace.SessionEventCode.CONNECT_FAILED_ERROR, (event) => {
-          console.error('[Solace] Connection failed:', event.infoStr);
-          reject(new Error(`Connection failed: ${event.infoStr}`));
+          const errorMsg = (event as unknown as { infoStr?: string }).infoStr || event.message || 'Unknown error';
+          console.error('[Solace] Connection failed:', errorMsg);
+          reject(new Error(`Connection failed: ${errorMsg}`));
         });
 
         this.session.on(solace.SessionEventCode.DISCONNECTED, () => {
@@ -55,7 +56,8 @@ export class SolaceClient {
         });
 
         this.session.on(solace.SessionEventCode.SUBSCRIPTION_ERROR, (event) => {
-          console.error('[Solace] Subscription error:', event.infoStr);
+          const errorMsg = (event as unknown as { infoStr?: string }).infoStr || event.message || 'Unknown error';
+          console.error('[Solace] Subscription error:', errorMsg);
         });
 
         this.session.on(solace.SessionEventCode.MESSAGE, (message) => {
@@ -170,7 +172,7 @@ export class SolaceClient {
     }
 
     const message = solace.SolclientFactory.createMessage();
-    message.setDestination(solace.SolclientFactory.createQueueDestination(queueName));
+    message.setDestination(solace.SolclientFactory.createDurableQueueDestination(queueName));
     message.setBinaryAttachment(JSON.stringify(payload));
     message.setDeliveryMode(solace.MessageDeliveryModeType.PERSISTENT);
 

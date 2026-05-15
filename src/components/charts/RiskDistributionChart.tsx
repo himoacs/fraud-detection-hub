@@ -63,7 +63,7 @@ export function RiskDistributionChart({ transactions }: RiskDistributionChartPro
               borderRadius: '12px',
               color: '#fff',
             }}
-            formatter={(value: number) => [`${value} txns`, 'Count']}
+            formatter={(value) => [`${value ?? 0} txns`, 'Count']}
             labelFormatter={(label) => `Risk: ${label}`}
           />
           <Bar dataKey="count" radius={[6, 6, 0, 0]}>

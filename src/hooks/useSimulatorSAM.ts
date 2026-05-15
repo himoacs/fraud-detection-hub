@@ -38,13 +38,12 @@ export function useSimulatorSAM() {
   const fraudCountRef = useRef(0);
   const latencyHistoryRef = useRef<number[]>([]);
   
-  // Track pending transactions by ID
-  const pendingTxMapRef = useRef<Map<string, number>>(new Map());
+  // Track pending transactions by ID - store full data for retrieval when scored
+  const pendingTxMapRef = useRef<Map<string, { receivedAt: number; tx: ScoredTransaction }>>(new Map());
 
   // Process incoming raw transaction (SAM mode) - show immediately with pending status
   const processRawTransaction = useCallback((tx: Transaction, topic?: string) => {
     const now = Date.now();
-    pendingTxMapRef.current.set(tx.transaction_id, now);
     
     // Create a pending transaction (partial ScoredTransaction)
     const pendingTx: ScoredTransaction = {
@@ -57,6 +56,9 @@ export function useSimulatorSAM() {
       _topic: topic, // Store actual Solace topic
     };
     
+    // Store full transaction data for retrieval when scored
+    pendingTxMapRef.current.set(tx.transaction_id, { receivedAt: now, tx: pendingTx });
+    
     setTransactions((prev) => [pendingTx, ...prev].slice(0, 100));
     txCountRef.current++;
     
@@ -68,8 +70,9 @@ export function useSimulatorSAM() {
     const txId = scored.transaction_id;
     if (!txId) return;
     
-    const receivedAt = pendingTxMapRef.current.get(txId);
-    const processingTime = receivedAt ? Date.now() - receivedAt : undefined;
+    const pending = pendingTxMapRef.current.get(txId);
+    const processingTime = pending ? Date.now() - pending.receivedAt : undefined;
+    const originalTx = pending?.tx; // Get original transaction data if available
     pendingTxMapRef.current.delete(txId);
     
     // Track latency for avg calculation
@@ -89,20 +92,29 @@ export function useSimulatorSAM() {
       const idx = prev.findIndex(t => t.transaction_id === txId);
       if (idx >= 0) {
         const updated = [...prev];
+        // Merge scored data with original - scored only has scoring fields, preserves original tx data
         updated[idx] = {
-          ...updated[idx],
-          ...scored,
-          risk_score: scored.risk_score ?? 0,
-          decision: scored.decision ?? 'approved',
-          _status: 'scored',
+          ...updated[idx],  // Original transaction data (amount, merchant, _topic, etc.)
+          ...scored,        // Only scoring fields (risk_score, decision, agent_reasoning)
+          _status: 'scored' as const,
           processing_time_ms: processingTime,
         };
         return updated;
       }
-      // Transaction not found (maybe evicted from list) - add as new
+      
+      // Transaction not found in display list
+      // Only add if we have original data from pendingTxMapRef (means raw tx was received but evicted)
+      // Don't add scored transactions where we never received the raw (due to topic filter)
+      if (!originalTx) {
+        console.log('[useSimulatorSAM] Ignoring scored tx - no matching raw transaction:', txId);
+        return prev;
+      }
+      
+      // Add with original transaction data from pendingTxMapRef
       return [{
-        ...scored as ScoredTransaction,
-        _status: 'scored',
+        ...originalTx,  // Original transaction data
+        ...scored,      // Scoring fields
+        _status: 'scored' as const,
         processing_time_ms: processingTime,
       }, ...prev].slice(0, 100);
     });
@@ -234,18 +246,21 @@ export function useSimulatorSAM() {
             }
             
             // Build scored transaction update from orchestrator response
+            // ONLY include fields that have actual values to avoid overwriting original data
             const scoredUpdate: Partial<ScoredTransaction> = {
               transaction_id: parsed.transaction_id,
-              timestamp: parsed.timestamp,
-              amount: parsed.amount,
-              currency: parsed.currency,
-              type: parsed.type,
-              merchant: parsed.merchant,
               risk_score: parsed.risk_score ?? 0,
               decision: parsed.decision ?? 'approved',
               agent_reasoning: parsed.reasoning || '',
               _fraud_pattern: parsed.detected_patterns?.[0] || parsed.patterns?.[0] || null,
             };
+            
+            // Only add optional fields if they have values (don't overwrite with undefined)
+            if (parsed.timestamp) scoredUpdate.timestamp = parsed.timestamp;
+            if (parsed.amount !== undefined) scoredUpdate.amount = parsed.amount;
+            if (parsed.currency) scoredUpdate.currency = parsed.currency;
+            if (parsed.type) scoredUpdate.type = parsed.type;
+            if (parsed.merchant) scoredUpdate.merchant = parsed.merchant;
             
             // Update the pending transaction with scored data
             processScoredTransaction(scoredUpdate);
@@ -291,17 +306,18 @@ export function useSimulatorSAM() {
             }
             
             const alert: Alert = {
-              id: alertData.alert_id || alertData.id || alertData.transaction_id || `alert-${Date.now()}`,
+              alert_id: alertData.alert_id || alertData.id || alertData.transaction_id || `alert-${Date.now()}`,
               timestamp: alertData.timestamp || new Date().toISOString(),
               severity: alertData.severity || 'medium',
               headline: alertData.headline || alertData.description || 'Fraud Alert',
+              description: alertData.description || alertData.headline || 'Fraud detected',
               transaction_id: alertData.transaction_id || '',
               score: alertData.risk_score || alertData.score || 0,
-              pattern: alertData.pattern || alertData.detected_patterns?.[0] || null,
+              pattern: alertData.pattern || alertData.detected_patterns?.[0] || 'unknown',
             };
             // Deduplicate alerts by ID
             setAlerts((prev) => {
-              if (prev.some(a => a.id === alert.id)) return prev;
+              if (prev.some(a => a.alert_id === alert.alert_id)) return prev;
               return [alert, ...prev].slice(0, 50);
             });
           } catch (err) {

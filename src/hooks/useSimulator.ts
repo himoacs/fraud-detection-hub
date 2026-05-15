@@ -59,13 +59,14 @@ export function useSimulator() {
           // Generate alert for high-risk transactions
           if (tx.risk_score >= 70) {
             const alert: Alert = {
-              id: tx.transaction_id,
+              alert_id: `alert-${tx.transaction_id}`,
               timestamp: tx.timestamp,
               severity: tx.risk_score >= 85 ? 'critical' : tx.risk_score >= 75 ? 'high' : 'medium',
               headline: `${tx._fraud_pattern?.replace('_', ' ').toUpperCase() || 'Suspicious'} - $${tx.amount.toFixed(2)}`,
+              description: `Fraud detected: ${tx._fraud_pattern || 'suspicious activity'}`,
               transaction_id: tx.transaction_id,
               score: tx.risk_score,
-              pattern: tx._fraud_pattern,
+              pattern: tx._fraud_pattern || 'unknown',
             };
             setAlerts((prev) => [alert, ...prev].slice(0, 20));
           }

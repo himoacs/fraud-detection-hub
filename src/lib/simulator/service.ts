@@ -8,7 +8,7 @@ import {
   setMode as setGeneratorMode,
   injectFraud,
 } from '@/lib/simulator/generator';
-import type { ScoredTransaction, Transaction } from '@/types';
+import type { ScoredTransaction, Transaction, SimulatorState } from '@/types';
 
 export { injectFraud };
 
@@ -103,7 +103,7 @@ if (mode === 'sam') {
   console.log('[Service] Demo mode enabled - local scoring with SSE broadcast');
 }
 
-export async function startSimulator(fraudRate?: number): Promise<ReturnType<typeof getStats>> {
+export async function startSimulator(fraudRate?: number): Promise<SimulatorState> {
   // Initialize Solace publisher for SAM mode
   if (mode === 'sam' && !solaceInitialized) {
     await initializeSolacePublisher();
@@ -116,7 +116,7 @@ export async function startSimulator(fraudRate?: number): Promise<ReturnType<typ
   return start();
 }
 
-export async function stopSimulator(): Promise<ReturnType<typeof getStats>> {
+export async function stopSimulator(): Promise<SimulatorState> {
   return stop();
 }
 

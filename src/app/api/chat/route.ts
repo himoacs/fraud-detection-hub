@@ -117,9 +117,10 @@ function extractThinkingFromStatusUpdate(dataStr: string): { text: string; agent
         
         // Check for text content - skip if it's the actual response (contains markdown)
         if (part.kind === 'text' && part.text) {
-          // Skip if it looks like response content
+          // Skip if it looks like response content (markdown/code/tables)
           if (part.text.includes('|') || part.text.includes('#') || 
-              part.text.includes('**') || part.text.length > 100) {
+              part.text.includes('**') || part.text.includes('`') ||
+              part.text.length > 100) {
             return null;  // Don't show response text as thinking
           }
           return { text: part.text.trim(), agentName };
@@ -282,9 +283,13 @@ export async function POST(request: NextRequest) {
           const requestId = `req-${Date.now()}`;
           const messageId = `msg-${Date.now()}`;
           
-          // Route to OrchestratorAgent which will delegate to appropriate agents
-          // The Orchestrator has access to all registered agents including those with SQL connectors
-          const TARGET_AGENT = "OrchestratorAgent";
+          // Route database queries directly to Fraud Analytics Agent (has SQL connector)
+          // Agent name from SAM: agent_019e2800_ac7f_78e0_93da_5c1ab2140fa4
+          const isDataQuery = /\b(list|show|query|how many|count|get|display|fetch|select|find|what|which|total|sum|average|max|min|blocked|approved|alerts?|transactions?|statistics|metrics|data|database|history|details|recent|today|yesterday|last|all)\b/i.test(message);
+          const FRAUD_ANALYTICS_AGENT = "agent_019e2800_ac7f_78e0_93da_5c1ab2140fa4";
+          const TARGET_AGENT = isDataQuery ? FRAUD_ANALYTICS_AGENT : "OrchestratorAgent";
+          
+          console.log(`[Chat API] Routing to: ${TARGET_AGENT} (isDataQuery: ${isDataQuery})`);
           
           const jsonRpcRequest = {
             id: requestId,

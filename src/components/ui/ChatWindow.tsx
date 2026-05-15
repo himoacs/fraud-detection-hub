@@ -5,16 +5,91 @@ import { useSolaceChat, type ChatMessage } from '@/hooks/useSolaceChat';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+/**
+ * Pre-process content to fix malformed markdown tables
+ * SAM sometimes returns tables without proper newlines
+ * Format: "header1|header2 ---|--- data1|data2 data3|data4"
+ */
+function preprocessMarkdownTables(content: string): string {
+  // Skip if content already has proper newlines between pipes
+  if (content.includes('\n|') || content.includes('|\n')) {
+    return content;
+  }
+  
+  // Check if content looks like a pipe-separated table
+  // Must have | and --- separator
+  if (!content.includes('|') || !content.includes('---')) {
+    return content;
+  }
+  
+  // Split by space and reconstruct with newlines
+  // Pattern: stuff|stuff|stuff ---stuff TXN-xxx|xxx|xxx
+  const parts = content.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = '';
+  
+  for (const part of parts) {
+    // If part contains only dashes and pipes, it's a separator
+    if (/^[-|]+$/.test(part)) {
+      if (currentLine) {
+        lines.push(currentLine);
+        currentLine = '';
+      }
+      lines.push(part);
+    } else if (part.includes('|')) {
+      // Start of a new data row
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      currentLine = part;
+    } else if (currentLine) {
+      // Continuation of current cell (space in cell value)
+      currentLine += ' ' + part;
+    }
+  }
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  
+  // Only process if we got a header, separator, and at least one data row
+  if (lines.length < 3) {
+    return content;
+  }
+  
+  // Format as proper markdown table
+  const formatRow = (row: string) => {
+    const cells = row.split('|');
+    return `| ${cells.join(' | ')} |`;
+  };
+  
+  const formatSeparator = (colCount: number) => {
+    return `| ${Array(colCount).fill('---').join(' | ')} |`;
+  };
+  
+  // Count columns from header
+  const headerCols = lines[0].split('|').length;
+  
+  // Build formatted table
+  const formatted = lines.map((line, i) => {
+    if (/^[-|]+$/.test(line)) {
+      return formatSeparator(headerCols);
+    }
+    return formatRow(line);
+  });
+  
+  return formatted.join('\n');
+}
+
 interface ChatWindowProps {
   onClose: () => void;
 }
 
 const SUGGESTED_PROMPTS = [
-  "How many transactions were blocked vs approved today?",
-  "Show high-risk transactions with score above 70 and their fraud patterns",
-  "Which countries have the most blocked transactions?",
-  "List high severity alerts with their transaction details",
-  "What's the average risk score by merchant category?",
+  "How many transactions are blocked vs approved? Show as a summary with counts.",
+  "Show blocked transactions with their transaction_id, amount, merchant_name, and country",
+  "List the top 5 countries by blocked transaction count with country and total_blocked",
+  "Show recent alerts with transaction_id, severity, alert_type, and reason",
+  "What is the average risk score? Show by merchant_category with category and avg_score",
 ];
 
 // Minimum and maximum dimensions for resize
@@ -283,8 +358,61 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               prose-blockquote:border-l-[var(--solace-green)] prose-blockquote:bg-[var(--background)]/50 prose-blockquote:py-1 prose-blockquote:px-3 prose-blockquote:my-2 prose-blockquote:not-italic
               prose-code:text-[var(--solace-green)] prose-code:bg-[var(--background)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs
             ">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.content}
+              <ReactMarkdown 
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  table: ({ children }) => (
+                    <div className="overflow-x-auto my-3 rounded-lg border border-[var(--border)]">
+                      <table className="w-full text-xs">{children}</table>
+                    </div>
+                  ),
+                  thead: ({ children }) => (
+                    <thead className="bg-[var(--solace-green)]/10 border-b border-[var(--border)]">
+                      {children}
+                    </thead>
+                  ),
+                  th: ({ children }) => (
+                    <th className="px-3 py-2 text-left text-[var(--solace-green)] font-semibold uppercase tracking-wider text-[10px]">
+                      {children}
+                    </th>
+                  ),
+                  td: ({ children }) => (
+                    <td className="px-3 py-2 text-[var(--foreground-secondary)] border-b border-[var(--border)]/30 font-mono">
+                      {children}
+                    </td>
+                  ),
+                  tr: ({ children }) => (
+                    <tr className="hover:bg-[var(--background)]/50 transition-colors">
+                      {children}
+                    </tr>
+                  ),
+                  code: ({ className, children, ...props }) => {
+                    const isInline = !className;
+                    return isInline ? (
+                      <code className="text-[var(--solace-green)] bg-[var(--background)] px-1.5 py-0.5 rounded text-xs font-mono" {...props}>
+                        {children}
+                      </code>
+                    ) : (
+                      <code className="block bg-[var(--background)] p-3 rounded-lg text-xs font-mono overflow-x-auto" {...props}>
+                        {children}
+                      </code>
+                    );
+                  },
+                  p: ({ children }) => (
+                    <p className="text-[var(--foreground-secondary)] my-2 leading-relaxed">{children}</p>
+                  ),
+                  strong: ({ children }) => (
+                    <strong className="text-white font-semibold">{children}</strong>
+                  ),
+                  ul: ({ children }) => (
+                    <ul className="list-disc list-inside my-2 space-y-1">{children}</ul>
+                  ),
+                  li: ({ children }) => (
+                    <li className="text-[var(--foreground-secondary)]">{children}</li>
+                  ),
+                }}
+              >
+                {preprocessMarkdownTables(message.content)}
               </ReactMarkdown>
             </div>
           )}
